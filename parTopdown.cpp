@@ -85,7 +85,6 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 	int* sendbuff;
 	int* recvbuff;
 
-
 	#pragma omp parallel
 	{
 		int tid = omp_get_thread_num();
@@ -150,9 +149,10 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		#pragma omp barrier
 
 		//printf("process %d done merging\n", tid);
-//============================================MPI part start==================================================		
-		// send/recieve queue
-		// sendbuff: array of tuples sent to socket i
+		//printf("mpi communication\n", tid);
+
+		// send/recieve buffer
+		// sendbuff: array of int sent to socket each socket
 		// MPI_all_to_all_personalized
 		
 		#pragma omp master 
@@ -177,20 +177,24 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 
 		rbSize = rdispls[tasks-1] + recvSize[tasks-1];
 		recvbuff = new int[rbSize];
+
+		//alltoall personalized send and receive
 		MPI_Alltoallv(sendbuff,sendSize,sdispls,MPI_INT,recvbuff,recvSize,rdispls,MPI_INT,MPI_COMM_WORLD);
-		//alltoall send and receive
-		
 		}
 		#pragma omp barrier
-//============================================MPI part end====================================================
+		//printf("mpi communication done!\n", tid);
 
 		// gather buffer from other socket and process the buffer
-		// assume all the data is gathered in Nodetuple* recvbuff
-		// recvbuff: array store all tuples
-		// rbSize: total number of tuples
+		// assume all the data is gathered in int* recvbuff
+		// recvbuff: array store all ints
+		// rbSize: total number of ints
 		
 		from = tid * rbSize / p;
+		if (from&1)
+			from--;
 		to = (tid+1) * rbSize / p;
+		if (to&1)
+			to--;
 
 		for (int i=from; i<to; i+=2){
 			int u = recvbuff[i];
@@ -295,7 +299,6 @@ int main(int argc, char* argv[]){
 	for (int i=0; i<numNode; i++){
 		printf( "node=%d, parent=%d, layer=%d\n", i, parent[i], layer[i]);
 	}
-
 
 	return 0;
 }
