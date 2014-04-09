@@ -12,7 +12,6 @@ class Node {
 public:
     int* neighbor;
     int num;
-	int visited;
     void setNum(int x) {
         num = x;
     }
@@ -21,15 +20,6 @@ public:
         for(int i = 0; i < N; i++)
             neighbor[i] = x[i];
     }
-};
-
-class Nodetuple{
-public:
-	int u,v;
-	void set(int x, int y){
-		u = x;
-		v = y;
-	}
 };
 
 //create graph from filename;
@@ -92,8 +82,8 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 	}
 
 	int rbSize = 0;
-	Nodetuple* sendbuff;
-	Nodetuple* recvbuff;
+	int* sendbuff;
+	int* recvbuff;
 
 
 	#pragma omp parallel
@@ -106,7 +96,7 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		to = (tid+1) * frontierSize / p;
 		
 		vector<int> newsubFrontier;
-		vector< vector<Nodetuple> >subSQ (tasks) ;
+		vector< vector<int> >subSQ (tasks) ;
 
 		for (int i=from; i<to; i++){
 			int u = frontier[i];
@@ -128,10 +118,9 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 							l[tid]++;
 						}
 					}else{
-						Nodetuple nt;
-						nt.set(u,v);
-						subSQ.at(s).push_back(nt);
-						sl[s][tid]++;
+						subSQ.at(s).push_back(u);
+						subSQ.at(s).push_back(v);
+						sl[s][tid]+=2;
 					}
 				}
 			}
@@ -168,6 +157,14 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		
 		#pragma omp master 
 		{
+		int* sendSize = new int[tasks];
+		int* recvSize = new int[tasks];
+		//send the size of data to each socket
+				
+
+
+
+		//alltoall send and receive
 
 		}
 		#pragma omp barrier
@@ -181,9 +178,9 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		from = tid * rbSize / p;
 		to = (tid+1) * rbSize / p;
 
-		for (int i=from; i<to; i++){
-			int u = recvbuff[i].u;
-			int v = recvbuff[i].v;
+		for (int i=from; i<to; i+=2){
+			int u = recvbuff[i];
+			int v = recvbuff[i+1];
 			if (layer[v] == -1){
 				int vlayer;
 				#pragma omp critical
@@ -208,7 +205,6 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 				newFrontier = new int[l[p-1]];
 			else	
 				newFrontier = NULL;
-
 			*newFrontierNum = l[p-1];
 		}	
 		#pragma omp barrier
@@ -216,7 +212,6 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		//for (int i=0; i<newsubFrontier.size(); i++)
 		//	cout << newsubFrontier.at(i);
 		//cout << endl;
-
 
 		// merge next frontier
 		int start=0;
@@ -230,7 +225,6 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 	}
 
 	if (! *newFrontierNum)	return NULL;
-	
 	
 	return newFrontier;
 };
