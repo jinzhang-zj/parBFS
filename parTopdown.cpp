@@ -143,7 +143,7 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 			int pcum = 0;
 			if (tid) pcum = sl[i][tid-1];
 
-			for (int j=0; j< sl[i][tid] - sl[i][tid-1]; j++){
+			for (int j=0; j< sl[i][tid] - pcum; j++){
 				sendbuff[rankcum[i] + pcum + j] = subSQ.at(i).at(j);
 			}
 		}
@@ -159,13 +159,27 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		{
 		int* sendSize = new int[tasks];
 		int* recvSize = new int[tasks];
-		//send the size of data to each socket
-				
+		int* sdispls = new int[tasks];
+		int* rdispls = new int[tasks];
 
+		sdispls[0]=0;
+		rdispls[0]=0;
+		for (int i=0; i<tasks; i++){
+			sendSize[i] = sl[i][p-1];
+		}
 
+		//send the data size to each socket
+		MPI_Alltoall(sendSize,tasks,MPI_INT,recvSize,tasks,MPI_INT,MPI_COMM_WORLD);
+		for (int i=1; i<tasks; i++){
+			sdispls[i] = sdispls[i-1] + sendSize[i-1];
+			rdispls[i] = rdispls[i-1] + recvSize[i-1];
+		}
 
+		rbSize = rdispls[tasks-1] + recvSize[tasks-1];
+		recvbuff = new int[rbSize];
+		MPI_Alltoallv(sendbuff,sendSize,sdispls,MPI_INT,recvbuff,recvSize,rdispls,MPI_INT,MPI_COMM_WORLD);
 		//alltoall send and receive
-
+		
 		}
 		#pragma omp barrier
 //============================================MPI part end====================================================
@@ -174,7 +188,7 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		// assume all the data is gathered in Nodetuple* recvbuff
 		// recvbuff: array store all tuples
 		// rbSize: total number of tuples
-		/*
+		
 		from = tid * rbSize / p;
 		to = (tid+1) * rbSize / p;
 
@@ -196,8 +210,7 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 			}
 		}
 		#pragma omp barrier
-		*/
-
+		
 		#pragma omp master
 		{
 			for (int i=1; i<p; i++)	l[i] += l[i-1];
@@ -229,14 +242,14 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 	return newFrontier;
 };
 
-int main(){
+int main(int argc, char* argv[]){
 	int rank, size;
 	int num_threads = 4;
-	/*
+	
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
-	*/
+	
 	int offset;
 	rank=0;
 	string file= "data";
@@ -276,6 +289,8 @@ int main(){
 		nextlayer++;
 		nextfrontierNum=0;
 	}
+
+	MPI_Finalize();
 
 	for (int i=0; i<numNode; i++){
 		printf( "node=%d, parent=%d, layer=%d\n", i, parent[i], layer[i]);
