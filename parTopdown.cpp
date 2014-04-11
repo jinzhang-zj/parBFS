@@ -6,7 +6,11 @@
 #include<omp.h>
 #include<mpi.h>
 #include<vector>
+
 using namespace std;
+
+typedef vector<int> Vec;
+typedef vector< vector<pair<int,int> > > Matpair;
 
 class Node {
 public:
@@ -51,7 +55,34 @@ Node* createGraph(int offset, string filename, int *numNode, int *totalNode) {
 };
 
 int determineSocket(int idx, int numNode){
-	return 0;
+	return idx/numNode;
+};
+
+void scan(int *count,int* displ,int size){
+    displ[0]=0;
+    for(int i = 0; i<size-1; i++){
+        displ[i+1] = displ[i]+count[i];
+    }
+}
+
+void alltoallPersonalized(int* sendPar, int* sendNode, int* sendCount, int size,//input
+                int* &recPar, int* &recNode, int &recS )
+{
+    int recCount[size];
+    for (int i=0;i<size;i++)
+        recCount[i] = 0;
+    MPI_Alltoall(sendCount,1,MPI_INT,recCount,1, MPI_INT, MPI_COMM_WORLD);
+
+    int sendDispl[size];
+    int recDispl[size];
+    scan(sendCount, sendDispl,size);
+    scan(recCount,recDispl,size);
+    recS = recDispl[size-1]+recCount[size-1];
+    recPar = new int[recS];
+    recNode = new int[recS];
+
+    MPI_Alltoallv(sendPar,sendCount,sendDispl,MPI_INT,recPar,recCount,recDispl,MPI_INT,MPI_COMM_WORLD);
+    MPI_Alltoallv(sendNode,sendCount,sendDispl,MPI_INT,recNode,recCount,recDispl,MPI_INT,MPI_COMM_WORLD);
 };
 
 //layer: the array with length totalNode which contains the layer info for all nodes, unvisited node has layer -1
@@ -82,8 +113,10 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 	}
 
 	int rbSize = 0;
-	int* sendbuff;
-	int* recvbuff;
+	int* sendpare;
+	int* sendnode;
+	int* recvpare;
+	int* recvnode;
 
 	#pragma omp parallel
 	{
@@ -95,15 +128,15 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		to = (tid+1) * frontierSize / p;
 		
 		vector<int> newsubFrontier;
-		vector< vector<int> >subSQ (tasks) ;
+		Matpair subSQ (tasks) ;
 
 		for (int i=from; i<to; i++){
 			int u = frontier[i];
 			for (int j=0; j<graph[u].num; j++){
-				if (layer[graph[u].neighbor[j]] == -1){
-					int v = graph[u].neighbor[j];
-					int s = determineSocket(v,numNode);
-					if (s == rank){
+				int v = graph[u].neighbor[j];
+				int s = determineSocket(v,numNode);
+				if (s == rank){
+					if (layer[v] == -1){
 						int vlayer;
 						#pragma omp critical
 						{	
@@ -116,11 +149,10 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 							newsubFrontier.push_back(v);
 							l[tid]++;
 						}
-					}else{
-						subSQ.at(s).push_back(u);
-						subSQ.at(s).push_back(v);
-						sl[s][tid]+=2;
 					}
+				}else{
+					subSQ.at(s).push_back( make_pair(u,v)  );
+					sl[s][tid]+=1;
 				}
 			}
 		}
@@ -143,7 +175,8 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 			if (tid) pcum = sl[i][tid-1];
 
 			for (int j=0; j< sl[i][tid] - pcum; j++){
-				sendbuff[rankcum[i] + pcum + j] = subSQ.at(i).at(j);
+				sendpare[rankcum[i] + pcum + j] = subSQ[i][j].first;
+				sendnode[rankcum[i] + pcum + j] = subSQ[i][j].second;
 			}
 		}
 		#pragma omp barrier
@@ -158,28 +191,16 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		#pragma omp master 
 		{
 		int* sendSize = new int[tasks];
-		int* recvSize = new int[tasks];
-		int* sdispls = new int[tasks];
-		int* rdispls = new int[tasks];
+		int rbSize;
 
-		sdispls[0]=0;
-		rdispls[0]=0;
 		for (int i=0; i<tasks; i++){
 			sendSize[i] = sl[i][p-1];
 		}
 
-		//send the data size to each socket
-		MPI_Alltoall(sendSize,tasks,MPI_INT,recvSize,tasks,MPI_INT,MPI_COMM_WORLD);
-		for (int i=1; i<tasks; i++){
-			sdispls[i] = sdispls[i-1] + sendSize[i-1];
-			rdispls[i] = rdispls[i-1] + recvSize[i-1];
-		}
 
-		rbSize = rdispls[tasks-1] + recvSize[tasks-1];
-		recvbuff = new int[rbSize];
+		alltoallPersonalized(sendpare,sendnode,sendSize,tasks,recvpare,recvnode,rbSize);
 
-		//alltoall personalized send and receive
-		MPI_Alltoallv(sendbuff,sendSize,sdispls,MPI_INT,recvbuff,recvSize,rdispls,MPI_INT,MPI_COMM_WORLD);
+
 		}
 		#pragma omp barrier
 		//printf("mpi communication done!\n", tid);
@@ -190,15 +211,11 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		// rbSize: total number of ints
 		
 		from = tid * rbSize / p;
-		if (from&1)
-			from--;
 		to = (tid+1) * rbSize / p;
-		if (to&1)
-			to--;
 
-		for (int i=from; i<to; i+=2){
-			int u = recvbuff[i];
-			int v = recvbuff[i+1];
+		for (int i=from; i<to; i++){
+			int u = recvpare[i];
+			int v = recvnode[i+1];
 			if (layer[v] == -1){
 				int vlayer;
 				#pragma omp critical
