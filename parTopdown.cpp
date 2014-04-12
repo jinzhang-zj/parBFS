@@ -11,48 +11,52 @@ using namespace std;
 
 typedef vector<int> Vec;
 typedef vector< vector<pair<int,int> > > Matpair;
-
-class Node {
+class Graph
+{
+    int V;
+    int N;
 public:
-    int* neighbor;
-    int num;
-    void setNum(int x) {
-        num = x;
-    }
-    void setNeighbor(int* x, int N) {
-        neighbor = new int[N];
-        for(int i = 0; i < N; i++)
-            neighbor[i] = x[i];
-    }
+    Vec *adj;
+    Graph(int V);
+    Graph(int rank, string filename);
+    void addEdge(int v,int w);
+    int localNode() const {return V;}
+    int totalNode() const {return N;}
 };
 
-//create graph from filename;
-//numNode returns # of nodes in current partition
-//totalNode returns total # of nodes
-//function returns a Node array with length numNode
-Node* createGraph(int offset, string filename, int *numNode, int *totalNode) {
+Graph::Graph(int V)
+{
+    this->V = V;
+    adj = new Vec[V];
+}
+
+void Graph::addEdge(int v,int w)
+{
+    adj[v].push_back(w);
+}
+
+Graph::Graph(int rank, string filename)
+{
     ifstream input;
-    int size, total, id, num;
     input.open(filename.c_str());
-    input >> total;
-    input >> size;
-    *totalNode = total;
-    *numNode = size;
-    Node* list = new Node[size];
-    for(int i = 0; i < size; i++) {
-        input >> id;
-        input >> num;
-        list[id - offset].setNum(num);
-        if(num > 0) {
-            list[id - offset].neighbor = new int[num];
-            for(int j = 0; j < num; j++) {
-                input >> list[id - offset].neighbor[j];
+    input >> this->N;
+    input >> this->V;
+    adj = new Vec[V];
+    int offset = rank*V;
+    int v,w, numngh;
+    for (int i = 0; i < V; i++)
+    {
+        input >> v;
+        input >> numngh;
+        if (numngh>0){
+            for (int j = 0; j<numngh; j++)
+            {
+                input >> w;
+                addEdge(v-offset,w);
             }
         }
-        else list[id-offset].neighbor = NULL;
     }
-    return list;
-};
+}
 
 int determineSocket(int idx, int numNode){
 	return idx/numNode;
@@ -71,6 +75,7 @@ void alltoallPersonalized(int* sendPar, int* sendNode, int* sendCount, int size,
     int recCount[size];
     for (int i=0;i<size;i++)
         recCount[i] = 0;
+    MPI_Barrier(MPI_COMM_WORLD);
     MPI_Alltoall(sendCount,1,MPI_INT,recCount,1, MPI_INT, MPI_COMM_WORLD);
 
     int sendDispl[size];
@@ -83,17 +88,17 @@ void alltoallPersonalized(int* sendPar, int* sendNode, int* sendCount, int size,
 
     MPI_Alltoallv(sendPar,sendCount,sendDispl,MPI_INT,recPar,recCount,recDispl,MPI_INT,MPI_COMM_WORLD);
     MPI_Alltoallv(sendNode,sendCount,sendDispl,MPI_INT,recNode,recCount,recDispl,MPI_INT,MPI_COMM_WORLD);
-};
+}
 
 //layer: the array with length totalNode which contains the layer info for all nodes, unvisited node has layer -1
 //nextlayer: new layer to search (number)
 //parent: array with length numNode which contains the parent info for all local nodes
 //this function returns an array with length newFrontierNum which contains new local frontier
 //parent is changed. layer will be kept the same
-int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode, int *parent, int *newFrontierNum, int frontierSize, int* frontier, int tasks, int rank, int p){
+int* topDown(int nextlayer, int* layer, Graph &graph, int numNode, int totalNode, int *parent, int *newFrontierNum, int frontierSize, int* frontier, int tasks, int rank, int p){
 	printf("entering topdown!\n");
 	printf("nextlayer=%d, frontier size=%d\n", nextlayer, frontierSize);
-
+	int offset=rank*numNode;
 	int* newFrontier;
 	*newFrontierNum = 0;
 	
@@ -118,6 +123,7 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 	int* recvpare;
 	int* recvnode;
 
+
 	#pragma omp parallel
 	{
 		int tid = omp_get_thread_num();
@@ -132,8 +138,8 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 
 		for (int i=from; i<to; i++){
 			int u = frontier[i];
-			for (int j=0; j<graph[u].num; j++){
-				int v = graph[u].neighbor[j];
+			for (int j=0; j<graph.adj[u-offset].size(); j++){
+				int v = graph.adj[u-offset][j];
 				int s = determineSocket(v,numNode);
 				if (s == rank){
 					if (layer[v] == -1){
@@ -144,8 +150,8 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 							layer[v] = nextlayer;
 						}
 						if (vlayer == -1){
-							//printf ("process %d add %d from %d\n", tid, v, u);
-							parent[v] = u;
+							printf ("process %d add %d from %d\n", tid, v, u);
+							parent[v-offset] = u;
 							newsubFrontier.push_back(v);
 							l[tid]++;
 						}
@@ -166,6 +172,9 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 				if (!i)
 					rankcum[i] = rankcum[i-1] + sl[i-1][p-1];
 			}
+
+			sendpare = new int[rankcum[tasks]+sl[tasks][p]];
+			sendnode = new int[rankcum[tasks]+sl[tasks][p]];
 		}
 		#pragma omp barrier
 
@@ -181,7 +190,7 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		}
 		#pragma omp barrier
 
-		//printf("process %d done merging\n", tid);
+		printf("process %d done merging\n", tid);
 		//printf("mpi communication\n", tid);
 
 		// send/recieve buffer
@@ -191,15 +200,14 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 		#pragma omp master 
 		{
 		int* sendSize = new int[tasks];
-		int rbSize;
+		int rbSize=0;
 
 		for (int i=0; i<tasks; i++){
 			sendSize[i] = sl[i][p-1];
 		}
-
-
+		printf("rank %d\n ",rank);
 		alltoallPersonalized(sendpare,sendnode,sendSize,tasks,recvpare,recvnode,rbSize);
-
+cout <<"rank "<<rank<<" rbSize " <<rbSize<<endl;
 
 		}
 		#pragma omp barrier
@@ -224,7 +232,7 @@ int* topDown(int nextlayer, int* layer, Node* graph, int numNode, int totalNode,
 					layer[v] = nextlayer;
 				}
 				if (vlayer == -1){
-					parent[v] = u;
+					parent[v-offset] = u;
 					newsubFrontier.push_back(v);
 					l[tid]++;
 				}
@@ -272,14 +280,14 @@ int main(int argc, char* argv[]){
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 	
 	int offset;
-	rank=0;
-	string file= "data";
-	Node *graph;
-	int numNode, totalNode;
-
-	if(rank==0)	offset=0;
-
-	graph = createGraph(offset, file, &numNode, &totalNode);
+	
+    ostringstream convert;
+    convert << rank+1;
+    string file = "data"+ convert.str();
+    int numNode, totalNode;
+    Graph graph(rank,file);
+	numNode= graph.localNode();
+	offset = rank*numNode;
 	printf ("graph completed!\n");
 
 	int* layer = new int[totalNode];
@@ -290,25 +298,42 @@ int main(int argc, char* argv[]){
 	#pragma omp parallel for
 	for(int i=0; i<totalNode; i++){
 		layer[i] = -1;
-		parent[i] = -1;
 	}
-
+	#pragma omp parallel for
+	for (int i=0;i<numNode;i++)
+		parent[i] = -1;
+	
+	int root = 0;
+	layer[root] = 0;
 	// root's layer is 0
-	layer[0] = 0;
+	int frontiersize = 0;
+	int* frontier;
+	
+	if (rank == root/numNode){
+		parent[root - offset] = -2;
+		frontier = new int[1];
+		frontiersize = 1;
+		frontier[0] = root;
+	}
+	
 	int nextlayer = 1;
-
-	int* frontier = new int[1];
-	frontier[0] = 0;
-	int frontiersize = 1;
-	int tasks = 1;
+	
 	int nextfrontierNum;
-
-	while(frontiersize){
-		frontier = topDown(nextlayer, layer, graph, numNode, totalNode, parent, &nextfrontierNum, frontiersize, frontier, tasks, rank, num_threads);
+	int globalfinish=0;
+	
+	
+	while(1){
+		MPI_Allreduce(&frontiersize,&globalfinish,1,MPI_INT,MPI_SUM,MPI_COMM_WORLD);
+		if (globalfinish==0)
+			break;
+		
+		frontier = topDown(nextlayer, layer, graph, numNode, totalNode, parent, &nextfrontierNum, frontiersize, frontier, size, rank, num_threads);
 		//printf("while_loop %d\n",frontier[0]);
 		frontiersize = nextfrontierNum;
+		
 		nextlayer++;
 		nextfrontierNum=0;
+		break;
 	}
 
 	MPI_Finalize();
