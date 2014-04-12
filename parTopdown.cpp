@@ -72,16 +72,16 @@ void scan(int *count,int* displ,int size){
 void alltoallPersonalized(int* sendPar, int* sendNode, int* sendCount, int size,//input
                 int* &recPar, int* &recNode, int &recS )
 {
-    printf("entering communication\n");
+    //printf("entering communication\n");
     int recCount[size];
     for (int i=0;i<size;i++)
         recCount[i] = 0;
-    printf("set up the barrier\n");
+    //printf("set up the barrier\n");
     MPI_Barrier(MPI_COMM_WORLD);
 
-    printf("getting the received buff size\n");
+    //printf("getting the received buff size\n");
     MPI_Alltoall(sendCount,1,MPI_INT,recCount,1, MPI_INT, MPI_COMM_WORLD);
-    printf("getting the received buff size done\n");
+    //printf("getting the received buff size done\n");
     
 
 
@@ -93,11 +93,8 @@ void alltoallPersonalized(int* sendPar, int* sendNode, int* sendCount, int size,
     recPar = new int[recS];
     recNode = new int[recS];
 
-    printf("exchanging parent buff size\n");
     MPI_Alltoallv(sendPar,sendCount,sendDispl,MPI_INT,recPar,recCount,recDispl,MPI_INT,MPI_COMM_WORLD);
-    printf("exchanging node buff size\n");
     MPI_Alltoallv(sendNode,sendCount,sendDispl,MPI_INT,recNode,recCount,recDispl,MPI_INT,MPI_COMM_WORLD);
-    printf("all done\n");
 }
 
 //layer: the array with length totalNode which contains the layer info for all nodes, unvisited node has layer -1
@@ -106,8 +103,8 @@ void alltoallPersonalized(int* sendPar, int* sendNode, int* sendCount, int size,
 //this function returns an array with length newFrontierNum which contains new local frontier
 //parent is changed. layer will be kept the same
 int* topDown(int nextlayer, int* layer, Graph &graph, int numNode, int totalNode, int *parent, int *newFrontierNum, int frontierSize, int* frontier, int tasks, int rank, int p){
-	printf("machine %d entering topdown!\n",rank);
-	printf("nextlayer=%d, frontier size=%d\n", nextlayer, frontierSize);
+	//printf("machine %d entering topdown!\n",rank);
+	//printf("nextlayer=%d, frontier size=%d\n", nextlayer, frontierSize);
 	int offset=rank*numNode;
 	int* newFrontier;
 	*newFrontierNum = 0;
@@ -133,7 +130,6 @@ int* topDown(int nextlayer, int* layer, Graph &graph, int numNode, int totalNode
 	int* recvpare;
 	int* recvnode;
 
-	printf("totally %d threads on rank %d\n",p,rank);
 	#pragma omp parallel
 	{
 		int tid = omp_get_thread_num();
@@ -164,27 +160,27 @@ int* topDown(int nextlayer, int* layer, Graph &graph, int numNode, int totalNode
 							layer[v] = nextlayer;
 						}
 						if (vlayer == -1){
-							printf ("machine %d process %d add %d from %d\n", rank, tid, v, u);
+							//printf ("machine %d process %d add %d from %d\n", rank, tid, v, u);
 							parent[v-offset] = u;
 							newsubFrontier.push_back(v);
 							l[tid]++;
 						}
 					}
 				}else{
-					printf ("machine %d process %d packaging %d for %d\n", rank, tid, v, s);
+					//printf ("machine %d process %d packaging %d for %d\n", rank, tid, v, s);
 					subSQ.at(s).push_back( make_pair(u,v)  );
 					sl[s][tid]++;
 				}
 			}
 		}
 		#pragma omp barrier
-		printf("rank %d done packing\n", rank);
+		//printf("rank %d done packing\n", rank);
 		
 		#pragma omp master
 		{
-		printf("estimating space...\n");
+		//printf("estimating space...\n");
 			for (int i=0; i<tasks; i++){
-				printf("rank %d is accumulating size for rank %d\n", rank, i);
+				//printf("rank %d is accumulating size for rank %d\n", rank, i);
 				for (int j=1; j<p; j++){
 					sl[i][j] += sl[i][j-1];
 				}
@@ -196,7 +192,7 @@ int* topDown(int nextlayer, int* layer, Graph &graph, int numNode, int totalNode
 			sendnode = new int[rankcum[tasks-1]+sl[tasks-1][p-1]];
 		}
 		#pragma omp barrier
-		printf("rank %d done space estimation\n", rank);
+		//printf("rank %d done space estimation\n", rank);
 
 		// merge the send buffer
 		for (int i=0; i<tasks; i++){
@@ -270,7 +266,6 @@ int* topDown(int nextlayer, int* layer, Graph &graph, int numNode, int totalNode
 			else	
 				newFrontier = NULL;
 			*newFrontierNum = l[p-1];
-			printf("rank %d has %d elements in nextfrontier\n", rank, *newFrontierNum);
 		}	
 		#pragma omp barrier
 		//printf("process %d has newsubFrontier size: %d\n", tid, newsubFrontier.size());
@@ -311,14 +306,11 @@ int main(int argc, char* argv[]){
     	string file = "data"+ convert.str();
     	int numNode, totalNode;
     	Graph graph(rank,file);
-	printf ("graph completed!\n");
+	//printf ("graph completed!\n");
 
 	numNode= graph.localNode();
 	totalNode = graph.totalNode();
 
-	//for (int i=0; i< numNode; i++){
-	//	printf("machine %d contain graph, with node %d contain %d neighbors\n", rank, i, (int)graph.adj[i].size());
-	//}
 
 	offset = rank*numNode;
 
@@ -359,10 +351,8 @@ int main(int argc, char* argv[]){
 		MPI_Allreduce(&frontiersize,&globalfinish,1,MPI_INT,MPI_SUM,MPI_COMM_WORLD);
 		if (globalfinish==0)
 			break;
-		printf("Again I'm machine %d\n",rank);
 		
 		frontier = topDown(nextlayer, layer, graph, numNode, totalNode, parent, &nextfrontierNum, frontiersize, frontier, size, rank, num_threads);
-		//printf("while_loop %d\n",frontier[0]);
 		frontiersize = nextfrontierNum;
 		
 		nextlayer++;
